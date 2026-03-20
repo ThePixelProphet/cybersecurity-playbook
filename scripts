@@ -1,0 +1,251 @@
+import os
+import subprocess
+from datetime import datetime
+
+# =========================
+# CONFIGURATION
+# =========================
+REPO_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DAILY_LOG_DIR = os.path.join(REPO_PATH, "daily_logs")
+PLAYBOOK_DIR = os.path.join(REPO_PATH, "playbook_updates")
+
+AUTO_PUSH = True
+
+
+# =========================
+# HELPER FUNCTIONS
+# =========================
+def ensure_directories():
+    """Create required directories if they do not already exist."""
+    os.makedirs(DAILY_LOG_DIR, exist_ok=True)
+    os.makedirs(PLAYBOOK_DIR, exist_ok=True)
+
+
+def ask_multiline(prompt):
+    """Prompt user for multi line input. Blank line ends input."""
+    print(f"\n{prompt}")
+    print("Type your response. Press Enter on a blank line when finished.\n")
+
+    lines = []
+    while True:
+        line = input()
+        if line.strip() == "":
+            break
+        lines.append(line)
+
+    return "\n".join(lines).strip()
+
+
+def yes_no(prompt):
+    """Return True for yes and False for no."""
+    while True:
+        answer = input(f"{prompt} (y/n): ").strip().lower()
+        if answer in ["y", "yes"]:
+            return True
+        if answer in ["n", "no"]:
+            return False
+        print("Please enter y or n.")
+
+
+def sanitize_filename(name):
+    """Clean up filenames for playbook topics."""
+    invalid_chars = '<>:"/\\|?*'
+    for ch in invalid_chars:
+        name = name.replace(ch, "")
+    return name.strip().replace(" ", "_").lower()
+
+
+def run_git_command(command):
+    """Run a git command in repo path."""
+    result = subprocess.run(
+        command,
+        cwd=REPO_PATH,
+        shell=True,
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        print(f"\nCommand failed: {command}")
+        if result.stderr:
+            print(result.stderr.strip())
+
+    return result
+
+
+# =========================
+# DAILY LOG (APPEND VERSION)
+# =========================
+def create_daily_log():
+    """Append a new entry to today's log."""
+    now = datetime.now()
+    date_str = now.strftime("%Y-%m-%d")
+    time_str = now.strftime("%I:%M %p")
+
+    studied = ask_multiline("What did you study today?")
+    learned = ask_multiline("What did you learn today?")
+    new_tech = ask_multiline("What new tech, tools, threats, or trends did you learn about that you should watch out for?")
+    action_items = ask_multiline("What do you need to review, practice, or follow up on?")
+    playbook_summary = ask_multiline("Did anything come up that should be reflected in your cybersecurity playbook? If so, describe it.")
+    wins = ask_multiline("Any wins today? Scripts completed, labs passed, concepts finally clicking, anything worth logging?")
+
+    file_path = os.path.join(DAILY_LOG_DIR, f"{date_str}.md")
+    file_exists = os.path.exists(file_path)
+
+    entry = f"""
+
+## Entry Logged: {time_str}
+
+### What I Studied
+{studied if studied else "No entry."}
+
+### What I Learned
+{learned if learned else "No entry."}
+
+### New Tech, Threats, or Tools to Watch
+{new_tech if new_tech else "No entry."}
+
+### Follow Up Items
+{action_items if action_items else "No entry."}
+
+### Playbook Related Notes
+{playbook_summary if playbook_summary else "No entry."}
+
+### Wins
+{wins if wins else "No entry."}
+"""
+
+    with open(file_path, "a", encoding="utf-8") as file:
+        if not file_exists:
+            file.write(f"# Daily Cybersecurity Log - {date_str}\n")
+        file.write(entry)
+
+    print(f"\nDaily log updated: {file_path}")
+    return file_path
+
+
+# =========================
+# PLAYBOOK UPDATES
+# =========================
+def update_playbook():
+    """Optionally append to a playbook topic."""
+    if not yes_no("Do you want to add a dedicated cybersecurity playbook update"):
+        return None
+
+    topic = input(
+        "\nWhat playbook topic needs updating? Example: phishing, incident_response, password_policy\n> "
+    ).strip()
+
+    if not topic:
+        print("No topic entered. Skipping playbook update.")
+        return None
+
+    filename = sanitize_filename(topic) + ".md"
+    filepath = os.path.join(PLAYBOOK_DIR, filename)
+
+    trigger = ask_multiline("What triggered this update?")
+    new_play = ask_multiline("What new play, response, tactic, lesson, or update should be added?")
+    watch_out = ask_multiline("What should you or others watch out for?")
+    next_steps = ask_multiline("Any next steps, tools to test, procedures to improve, or documentation needed?")
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+
+    entry = f"""
+
+## Update Logged: {timestamp}
+
+### Trigger
+{trigger if trigger else "No entry."}
+
+### New Play or Update
+{new_play if new_play else "No entry."}
+
+### What to Watch Out For
+{watch_out if watch_out else "No entry."}
+
+### Next Steps
+{next_steps if next_steps else "No entry."}
+"""
+
+    file_exists = os.path.exists(filepath)
+
+    with open(filepath, "a", encoding="utf-8") as file:
+        if not file_exists:
+            title = topic.replace("_", " ").title()
+            file.write(f"# {title}\n")
+        file.write(entry)
+
+    print(f"\nPlaybook updated: {filepath}")
+    return filepath
+
+
+# =========================
+# GIT COMMIT + PUSH
+# =========================
+def git_commit_and_push(changed_files):
+    """Commit and optionally push changes."""
+    print("\nRunning Git commands...")
+
+    pull_result = run_git_command("git pull")
+    if pull_result.returncode != 0:
+        print("Git pull failed. Resolve conflicts before continuing.")
+        return
+
+    for file_path in changed_files:
+        relative_path = os.path.relpath(file_path, REPO_PATH)
+        run_git_command(f'git add "{relative_path}"')
+
+    commit_message = input("\nEnter a commit message or press Enter to use default:\n> ").strip()
+    if not commit_message:
+        commit_message = f"Update study log and cybersecurity playbook for {datetime.now().strftime('%Y-%m-%d')}"
+
+    commit_result = run_git_command(f'git commit -m "{commit_message}"')
+
+    combined_output = (commit_result.stdout + commit_result.stderr).lower()
+    if "nothing to commit" in combined_output:
+        print("Nothing new to commit.")
+        return
+
+    if commit_result.returncode != 0:
+        print("Commit failed.")
+        return
+
+    print("Commit created successfully.")
+
+    if AUTO_PUSH:
+        push_result = run_git_command("git push")
+        if push_result.returncode == 0:
+            print("Changes pushed to GitHub successfully.")
+        else:
+            print("Commit worked, but push failed.")
+    else:
+        print("Auto push disabled. Commit complete.")
+
+
+# =========================
+# MAIN
+# =========================
+def main():
+    print("=== Cybersecurity Daily GitHub Logger ===")
+    print(f"Repo path detected: {REPO_PATH}")
+
+    ensure_directories()
+
+    changed_files = []
+
+    daily_log = create_daily_log()
+    if daily_log:
+        changed_files.append(daily_log)
+
+    playbook_file = update_playbook()
+    if playbook_file:
+        changed_files.append(playbook_file)
+
+    if changed_files:
+        git_commit_and_push(changed_files)
+    else:
+        print("No changes to commit.")
+
+
+if __name__ == "__main__":
+    main()
